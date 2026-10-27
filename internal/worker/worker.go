@@ -4,10 +4,12 @@ package worker
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Patchwrit/patchwrit-worker/internal/checkout"
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
+	"github.com/Patchwrit/patchwrit-worker/internal/maven"
 	"github.com/Patchwrit/patchwrit-worker/internal/toolchain"
 )
 
@@ -58,8 +60,34 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 	}
 
 	result.Repository = info
+
+	if len(info.POMFiles) == 0 {
+		return fail(result, "invalid_pom", "no pom.xml found in repository", start)
+	}
+
+	mavenStart := time.Now()
+	deps, err := maven.Resolve(ctx, dir)
+	result.TimingsMs["maven"] = time.Since(mavenStart).Milliseconds()
+	if err != nil {
+		if ctx.Err() != nil {
+			return fail(result, "timeout", err.Error(), start)
+		}
+		category, message := splitCategory(err.Error())
+		return fail(result, category, message, start)
+	}
+	result.Dependencies = deps
+
 	result.TimingsMs["execution"] = time.Since(start).Milliseconds()
 	return result
+}
+
+func splitCategory(message string) (string, string) {
+	for _, category := range []string{"invalid_pom", "private_artifact", "jdk_incompatible", "network", "timeout", "internal"} {
+		if strings.HasPrefix(message, category+":") {
+			return category, strings.TrimSpace(strings.TrimPrefix(message, category+":"))
+		}
+	}
+	return "internal", message
 }
 
 func fail(result contract.Result, category, message string, start time.Time) contract.Result {
