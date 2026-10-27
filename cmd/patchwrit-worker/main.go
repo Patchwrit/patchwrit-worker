@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Patchwrit/patchwrit-worker/internal/worker"
@@ -25,7 +26,21 @@ func main() {
 		jobID = "local-smoke"
 	}
 
-	res := worker.BuildResult(jobID, start, worker.SystemDetect)
+	timeout := 300 * time.Second
+	if raw := os.Getenv("PATCHWRIT_TIMEOUT_SECONDS"); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
+			timeout = time.Duration(seconds) * time.Second
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	res := worker.Execute(ctx, worker.Input{
+		JobID:         jobID,
+		RepositoryURL: os.Getenv("PATCHWRIT_REPOSITORY_URL"),
+		PinnedSHA:     os.Getenv("PATCHWRIT_PINNED_SHA"),
+	}, start, worker.SystemDetect)
 
 	if err := json.NewEncoder(os.Stdout).Encode(res); err != nil {
 		fmt.Fprintf(os.Stderr, "patchwrit-worker: encode result: %v\n", err)
