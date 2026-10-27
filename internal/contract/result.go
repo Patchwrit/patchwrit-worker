@@ -38,6 +38,21 @@ type RepositoryInfo struct {
 	Modules       []string `json:"modules"`
 }
 
+// Dependency is one node of the effective Maven graph, flattened with
+// the introduction path that brought it in.
+type Dependency struct {
+	GroupID       string   `json:"group_id"`
+	ArtifactID    string   `json:"artifact_id"`
+	Version       string   `json:"version"`
+	Scope         string   `json:"scope,omitempty"`
+	Depth         int      `json:"depth"`
+	IntroducedVia []string `json:"introduced_via"`
+}
+
+func (d Dependency) Coordinate() string {
+	return d.GroupID + ":" + d.ArtifactID + ":" + d.Version
+}
+
 // Result is the bounded JSON document the worker emits (stdout in smoke
 // mode, the Phoenix callback in later milestones).
 type Result struct {
@@ -47,6 +62,7 @@ type Result struct {
 	WorkerVersion string           `json:"worker_version"`
 	Environment   Environment      `json:"environment"`
 	Repository    *RepositoryInfo  `json:"repository,omitempty"`
+	Dependencies  []Dependency     `json:"dependencies,omitempty"`
 	TimingsMs     map[string]int64 `json:"timings_ms"`
 	Errors        []Error          `json:"errors"`
 }
