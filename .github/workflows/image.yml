@@ -1,8 +1,8 @@
 name: image
 
-# Publishes the worker smoke image to GHCR. Public repo + public image:
-# builds are free and Fly pulls without credentials. Phoenix pins the
-# resulting digest at dispatch time.
+# Publishes worker images to GHCR. Public repo + public images: builds
+# are free and Fly pulls without credentials. Phoenix pins the resulting
+# platform digest at dispatch time.
 
 on:
   push:
@@ -16,6 +16,15 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: smoke
+            dockerfile: Dockerfile
+          - variant: jdk17
+            dockerfile: Dockerfile.jdk17
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,11 +42,13 @@ jobs:
           images: ghcr.io/patchwrit/patchwrit-worker
           tags: |
             type=sha
-            type=raw,value=smoke
+            type=raw,value=${{ matrix.variant }}
 
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

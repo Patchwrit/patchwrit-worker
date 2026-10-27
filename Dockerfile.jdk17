@@ -1,0 +1,18 @@
+# Patchwrit worker — JDK 17 / Maven toolchain image.
+# Fly Machines are linux/amd64, so the Maven runtime is pinned to the
+# exact amd64 image manifest verified for this variant. The first Maven
+# slice uses this image for toolchain detection only; repository cloning
+# and dependency resolution arrive in later worker milestones.
+FROM golang:1.26-alpine3.22 AS build
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -o /out/patchwrit-worker ./cmd/patchwrit-worker
+
+FROM maven:3.9.11-eclipse-temurin-17@sha256:fa7aa19829157d299ff05f631b51697a388dcd2f6955e84249ecc652015f217b AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/patchwrit-worker /patchwrit-worker
+ENTRYPOINT ["/patchwrit-worker"]
