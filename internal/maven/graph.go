@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
+	"github.com/Patchwrit/patchwrit-worker/internal/observe"
 )
 
 const maxDependencies = 2000
@@ -164,7 +165,7 @@ const treeFileName = "patchwrit-tree.json"
 // module-relative output file, then collects and verifies one tree
 // per inventoried POM. It never runs the project's own build or
 // wrapper script.
-func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bool) (*Resolution, error) {
+func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bool, jobID string) (*Resolution, error) {
 	workHome, err := os.MkdirTemp("", "patchwrit-maven-home-*")
 	if err != nil {
 		return nil, err
@@ -256,6 +257,26 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 	graph.DownloadedArtifacts, graph.DownloadedBytes = repoStats(filepath.Join(workHome, "m2"))
 
 	graph.Complete = len(graph.ModulesFailed) == 0 && !graph.DependencyLimitHit && !pomTruncated
+
+	for _, mod := range graph.Modules {
+		observe.Event(jobID, "maven.module."+mod.Status, map[string]any{
+			"module":       mod.Module,
+			"pom_path":     mod.POMPath,
+			"duration_ms":  mod.DurationMs,
+			"dependencies": mod.Dependencies,
+		})
+	}
+	observe.Event(jobID, "maven.completed", map[string]any{
+		"complete":             graph.Complete,
+		"modules_total":        graph.ModulesTotal,
+		"modules_resolved":     graph.ModulesResolved,
+		"modules_failed":       len(graph.ModulesFailed),
+		"dependencies":         len(deps),
+		"downloaded_artifacts": graph.DownloadedArtifacts,
+		"downloaded_bytes":     graph.DownloadedBytes,
+		"dependency_limit_hit": graph.DependencyLimitHit,
+	})
+
 	return &Resolution{Dependencies: deps, Graph: graph}, nil
 }
 

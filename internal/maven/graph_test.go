@@ -130,7 +130,7 @@ func TestResolveTwoModuleReactor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	res, err := Resolve(ctx, dir, []string{"pom.xml", "mod-a/pom.xml", "mod-b/pom.xml"}, false)
+	res, err := Resolve(ctx, dir, []string{"pom.xml", "mod-a/pom.xml", "mod-b/pom.xml"}, false, "job-test")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
