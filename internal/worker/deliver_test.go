@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,26 @@ func TestDeliverPostsResultWithBearerToken(t *testing.T) {
 	}
 	if got.JobID != "job-9" || got.Status != contract.StatusCompleted {
 		t.Fatalf("delivered result = %+v", got)
+	}
+}
+
+func TestDeliverRejectsOversizePayloadBeforeSending(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	res := BuildResult("job-9", time.Now(), SystemDetect)
+	res.Environment.GoVersion = strings.Repeat("x", MaxCallbackPayloadBytes)
+
+	err := Deliver(context.Background(), server.Client(), server.URL, "job-token", res)
+	if err == nil || !strings.Contains(err.Error(), "exceeds callback limit") {
+		t.Fatalf("Deliver error = %v, want explicit oversize error", err)
+	}
+	if called {
+		t.Fatal("oversize payload must not be sent")
 	}
 }
 

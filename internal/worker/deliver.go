@@ -11,6 +11,11 @@ import (
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
 )
 
+// MaxCallbackPayloadBytes mirrors the Phoenix callback limit
+// (docs/ANALYSIS_CONTRACT.md). Oversize results fail explicitly here
+// instead of being rejected opaquely at delivery (review W009).
+const MaxCallbackPayloadBytes = 4 * 1024 * 1024
+
 // Deliver POSTs the result to the Phoenix callback URL with the
 // job-scoped bearer token. A non-2xx response is an error: the caller
 // exits non-zero so Phoenix classifies it as a worker crash rather than
@@ -19,6 +24,9 @@ func Deliver(ctx context.Context, client *http.Client, url, token string, res co
 	payload, err := json.Marshal(res)
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
+	}
+	if len(payload) > MaxCallbackPayloadBytes {
+		return fmt.Errorf("result payload is %d bytes, exceeds callback limit %d", len(payload), MaxCallbackPayloadBytes)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
