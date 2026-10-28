@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
@@ -171,6 +172,9 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 	cmd := exec.CommandContext(ctx, "mvn",
 		"-B", "-ntp", "-fae",
 		"-Dmaven.repo.local="+filepath.Join(workHome, "m2"),
+		// Timestamped log lines let us attribute per-module durations.
+		"-Dorg.slf4j.simpleLogger.showDateTime=true",
+		"-Dorg.slf4j.simpleLogger.dateTimeFormat=HH:mm:ss,SSS",
 		"org.apache.maven.plugins:maven-dependency-plugin:3.8.1:tree",
 		"-DoutputType=json",
 		"-DoutputFile="+filepath.Join("target", treeFileName),
@@ -185,27 +189,34 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 		return nil, fmt.Errorf("timeout: %w", ctx.Err())
 	}
 
+	durations := parseModuleDurations(string(out))
 	graph := contract.Graph{
 		ModulesTotal:          len(pomFiles),
 		ModulesFailed:         []string{},
+		Modules:               []contract.ModuleStat{},
 		POMInventoryTruncated: pomTruncated,
 	}
 	occurrences := []contract.Dependency{}
+	moduleByPOM := map[string]string{}
 
 	for _, pomPath := range pomFiles {
+		stat := contract.ModuleStat{POMPath: pomPath, Status: "failed"}
 		moduleDir := filepath.Join(dir, filepath.Dir(pomPath))
 		raw, err := os.ReadFile(filepath.Join(moduleDir, "target", treeFileName))
 		if err != nil {
 			graph.ModulesFailed = append(graph.ModulesFailed, pomPath)
+			graph.Modules = append(graph.Modules, stat)
 			continue
 		}
 		deps, root, err := ParseModuleTree(raw, "", pomPath)
 		if err != nil {
 			graph.ModulesFailed = append(graph.ModulesFailed, pomPath)
+			graph.Modules = append(graph.Modules, stat)
 			continue
 		}
 		if expected := pomCoordinate(filepath.Join(dir, pomPath)); expected != "" && expected != root {
 			graph.ModulesFailed = append(graph.ModulesFailed, pomPath)
+			graph.Modules = append(graph.Modules, stat)
 			continue
 		}
 		for i := range deps {
@@ -213,6 +224,11 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 		}
 		occurrences = append(occurrences, deps...)
 		graph.ModulesResolved++
+		stat.Module = root
+		stat.Status = "resolved"
+		stat.DurationMs = durations[artifactOf(root)]
+		moduleByPOM[pomPath] = root
+		graph.Modules = append(graph.Modules, stat)
 	}
 
 	if graph.ModulesResolved == 0 {
@@ -228,8 +244,90 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 		deps = deps[:maxDependencies]
 	}
 
+	counts := map[string]int{}
+	for _, dep := range deps {
+		counts[dep.Module]++
+	}
+	for i := range graph.Modules {
+		graph.Modules[i].Dependencies = counts[graph.Modules[i].Module]
+	}
+	graph.DownloadedArtifacts, graph.DownloadedBytes = repoStats(filepath.Join(workHome, "m2"))
+
 	graph.Complete = len(graph.ModulesFailed) == 0 && !graph.DependencyLimitHit && !pomTruncated
 	return &Resolution{Dependencies: deps, Graph: graph}, nil
+}
+
+func artifactOf(coordinate string) string {
+	parts := strings.SplitN(coordinate, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return coordinate
+}
+
+var (
+	treeStartPattern = regexp.MustCompile(`^(\d{2}):(\d{2}):(\d{2}),(\d{3}) \[INFO\] --- dependency:3\.8\.1:tree \(default-cli\) @ (\S+) ---`)
+	buildEndPattern  = regexp.MustCompile(`^(\d{2}):(\d{2}):(\d{2}),(\d{3}) \[INFO\] BUILD (SUCCESS|FAILURE)`)
+)
+
+// parseModuleDurations attributes wall-clock durations to each
+// module's dependency-plugin execution using the timestamped Maven
+// log: a module runs from its plugin banner until the next module's
+// banner (or the BUILD line, for the last module).
+func parseModuleDurations(output string) map[string]int64 {
+	type mark struct {
+		artifact string
+		atMs     int64
+	}
+	marks := []mark{}
+	var buildAt int64 = -1
+
+	for _, line := range strings.Split(output, "\n") {
+		if m := treeStartPattern.FindStringSubmatch(line); m != nil {
+			marks = append(marks, mark{m[5], timestampMs(m)})
+		} else if m := buildEndPattern.FindStringSubmatch(line); m != nil {
+			buildAt = timestampMs(m)
+		}
+	}
+
+	durations := map[string]int64{}
+	for i, mark := range marks {
+		end := buildAt
+		if i+1 < len(marks) {
+			end = marks[i+1].atMs
+		}
+		if end >= mark.atMs {
+			durations[mark.artifact] = end - mark.atMs
+		}
+	}
+	return durations
+}
+
+func timestampMs(match []string) int64 {
+	var h, m, s, ms int64
+	fmt.Sscanf(match[1], "%d", &h)
+	fmt.Sscanf(match[2], "%d", &m)
+	fmt.Sscanf(match[3], "%d", &s)
+	fmt.Sscanf(match[4], "%d", &ms)
+	return ((h*60+m)*60+s)*1000 + ms
+}
+
+// repoStats counts downloaded artifacts (files) and bytes in the
+// isolated local repository after resolution.
+func repoStats(m2 string) (files int64, bytes int64) {
+	_ = filepath.WalkDir(m2, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !entry.IsDir() {
+			files++
+			if info, err := entry.Info(); err == nil {
+				bytes += info.Size()
+			}
+		}
+		return nil
+	})
+	return files, bytes
 }
 
 // pomCoordinate reads a POM's group:artifact (group inherited from the
