@@ -1,6 +1,7 @@
 package maven
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -149,6 +150,21 @@ func TestResolveTwoModuleReactor(t *testing.T) {
 	}
 	if !byModule["com.example.fixture:mod-a"] || !byModule["com.example.fixture:mod-b"] {
 		t.Fatalf("modules present = %v, want mod-a and mod-b", byModule)
+	}
+}
+
+func TestStreamingOutputCapturesAndStreams(t *testing.T) {
+	var stream bytes.Buffer
+	cmd := exec.Command("sh", "-c", "echo out; echo err >&2")
+	captured, err := streamingOutputTo(cmd, &stream)
+	if err != nil {
+		t.Fatalf("streamingOutputTo: %v", err)
+	}
+	if !strings.Contains(string(captured), "out") || !strings.Contains(string(captured), "err") {
+		t.Fatalf("captured = %q, want both streams", captured)
+	}
+	if stream.String() != string(captured) {
+		t.Fatalf("streamed %q != captured %q", stream.String(), string(captured))
 	}
 }
 

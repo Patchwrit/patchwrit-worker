@@ -3,6 +3,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -48,6 +49,9 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 	}
 	defer os.RemoveAll(dir)
 
+	// Lifecycle lines go to stderr: Fly captures them for `fly logs`,
+	// while stdout stays reserved for the result JSON.
+	fmt.Fprintf(os.Stderr, "patchwrit-worker: cloning %s at %s\n", in.RepositoryURL, in.PinnedSHA)
 	cloneStart := time.Now()
 	info, err := checkout.Clone(ctx, in.RepositoryURL, in.PinnedSHA, dir)
 	result.TimingsMs["clone"] = time.Since(cloneStart).Milliseconds()
@@ -65,6 +69,7 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 		return fail(result, "invalid_pom", "no pom.xml found in repository", start)
 	}
 
+	fmt.Fprintf(os.Stderr, "patchwrit-worker: resolving Maven graph (%d POM files)\n", len(info.POMFiles))
 	mavenStart := time.Now()
 	resolution, err := maven.Resolve(ctx, dir, info.POMFiles, info.POMInventoryTruncated)
 	result.TimingsMs["maven"] = time.Since(mavenStart).Milliseconds()
