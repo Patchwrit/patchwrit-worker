@@ -1,9 +1,9 @@
 # Phase One — Independent Worker Review
 
-**Status:** Initial code-reading review, not a completed audit. **Date:** 2026-10-27. **Branch reviewed:** main. No tests or live Fly Machines executed by reviewer.
+**Status:** Second-pass static code review; findings ready for discussion, not a completed security audit. **Date:** 2026-10-27. **Branch reviewed:** main. No tests or live Fly Machines executed by reviewer.
 
 ## Scope
-Read: `cmd/patchwrit-worker/main.go`, `internal/worker/{worker.go,deliver.go,worker_test.go}`, `internal/checkout/{checkout.go,checkout_test.go}`, `internal/contract/result.go`, both JDK Dockerfiles, README, worker analysis contract, and API handoff/readiness documents. Maven resolver implementation and full CI still need inspection. Live scan counts in handoff are historical claims, not reproduced here.
+Read: `cmd/patchwrit-worker/main.go`, `internal/worker/{worker.go,deliver.go,worker_test.go}`, `internal/checkout/{checkout.go,checkout_test.go}`, `internal/contract/result.go`, both JDK Dockerfiles, README, worker analysis contract, and API handoff/readiness documents. Also reviewed `internal/maven/{graph.go,graph_test.go}`, `internal/worker/deliver_test.go`, `.github/workflows/image.yml`, `Dockerfile`, and worker handoff/contract docs. Live scan counts in handoff are historical claims, not reproduced here.
 
 ## Observed strengths
 - Phoenix/Go separation and digest-pinned runtime images.
@@ -33,11 +33,35 @@ Single callback POST with 15-second timeout; transient failure exits nonzero. **
 **Files:** worker README, analysis contract, and comments.
 Some text still claims clone/Maven functionality is unimplemented despite current code and API handoff. **Action:** reconcile docs with current code after review.
 
+### P1-W006 — Dependency parser silently truncates at 2,000 — HIGH
+**File:** `internal/maven/graph.go` (`ParseTree`).
+When `len(deps) >= maxDependencies`, traversal returns without error, warning, or completeness metadata. A completed scan can therefore omit dependencies. **Action:** return an explicit limit error or completeness flag; test a tree with 2,001+ nodes and ensure API does not label a partial result complete.
+
+### P1-W007 — Reactor/multi-module dependency coverage is not explicitly preserved — HIGH (coverage concern)
+**File:** `internal/maven/graph.go` (`Resolve`).
+A single Maven invocation writes one `dependency-tree.json` and parses it as one root. The worker does not explicitly enumerate each module's effective tree or preserve module identity. Maven reactor behavior and output-file semantics need integration verification before claiming all modules are covered. **Action:** add a two-module integration fixture with different vulnerable transitive dependencies; capture per-module graph, module provenance and completeness. This does not assert Maven cannot handle reactors.
+
+### P1-W008 — Image publication workflow does not run tests — MEDIUM
+**File:** `.github/workflows/image.yml`.
+The workflow builds and publishes three images on pushes to `main`, with no `go test ./...` or static checks before publishing. **Action:** add a test/check job that gates publishing, plus PR checks.
+
+### P1-W009 — Callback payload size not enforced client-side — MEDIUM
+**Files:** `internal/worker/deliver.go`, `internal/contract/result.go`.
+`Deliver` marshals and sends the complete result without checking the documented 256 KB limit. Dependency paths and 2,000 nodes may exceed it, causing otherwise successful analyses to fail at callback. **Action:** establish a shared payload limit and explicit oversize error/partial-result behavior; add a realistic large-tree serialization test. Verify API's actual enforcement separately.
+
+### P1-W010 — Untrusted worker process is root by default; resource isolation is mostly external — HIGH (deployment risk)
+**Files:** `Dockerfile.jdk17`, `Dockerfile.jdk21`, `internal/maven/graph.go`, `internal/checkout/checkout.go`.
+No `USER` directive in the runtime Dockerfiles. Maven is an execution surface for repository-controlled plugins/extensions, even with a scrubbed environment and isolated HOME. `git clone` has no explicit byte-size bound and `exec.CommandContext` only directly manages the launched process, not necessarily all descendants. **Action:** verify Fly Machine isolation, egress and resource caps; run as a non-root user, constrain Git checkout/network and subprocess trees, and test a malicious POM/plugin. This is not a claim of host escape.
+
+### P1-W011 — Maven subprocess secret filtering is denylist-based — MEDIUM (hardening)
+**File:** `internal/maven/graph.go` (`ScrubbedEnv`).
+Filtering keys containing TOKEN/SECRET/PASSWORD and FLY_/PATCHWRIT_CALLBACK prefixes is a useful safeguard but can miss other sensitive variables (e.g. provider-specific API keys, credential-file paths). **Action:** construct a minimal allowlisted environment with only required PATH, HOME, Java/Maven configuration and safe network settings; add tests for arbitrary secret names.
+
 ## Follow-up verification before final review
-1. Read Maven resolver and tests, including subprocess env, timeout, scopes, omitted nodes, multi-module support and error handling.
-2. Check worker runtime privileges, egress restrictions, clone size/disk limits, process termination.
-3. Confirm 256 KB callback payload bound against large dependency trees and API behavior.
-4. Check CI and independently run local tests if execution access becomes available.
-5. Validate each finding with Muse Code before implementation.
+1. Run `go test ./...` and representative Maven integration fixtures in a suitable execution environment; no tests were executed in this review.
+2. Verify actual Fly Machine configuration, network egress, memory/disk caps, and crash cleanup in the API repo.
+3. Verify API callback payload limit, idempotency and large-result handling.
+4. Discuss findings and priority with Muse Code, including actual Maven reactor output and provenance semantics.
+5. Review and adjust severity after runtime verification; do not merge this draft until agreed.
 
 **Phase Two:** intentionally not planned yet; discuss after Phase One review.
