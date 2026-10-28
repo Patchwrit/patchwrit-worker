@@ -66,7 +66,7 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 	}
 
 	mavenStart := time.Now()
-	deps, err := maven.Resolve(ctx, dir)
+	resolution, err := maven.Resolve(ctx, dir, info.POMFiles, info.POMInventoryTruncated)
 	result.TimingsMs["maven"] = time.Since(mavenStart).Milliseconds()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -75,7 +75,8 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 		category, message := splitCategory(err.Error())
 		return fail(result, category, message, start)
 	}
-	result.Dependencies = deps
+	result.Dependencies = resolution.Dependencies
+	result.Graph = &resolution.Graph
 
 	result.TimingsMs["execution"] = time.Since(start).Milliseconds()
 	return result
