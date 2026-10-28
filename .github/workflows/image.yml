@@ -24,6 +24,8 @@ jobs:
             dockerfile: Dockerfile
           - variant: jdk17
             dockerfile: Dockerfile.jdk17
+          - variant: jdk21
+            dockerfile: Dockerfile.jdk21
 
     steps:
       - uses: actions/checkout@v4
