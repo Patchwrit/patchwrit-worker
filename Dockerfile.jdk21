@@ -1,0 +1,18 @@
+# Patchwrit worker — JDK 21 / Maven toolchain image.
+# Identical to Dockerfile.jdk17 except the Maven/Temurin runtime: the
+# amd64 manifest digest is pinned so every Fly Machine runs the exact
+# same toolchain. Phoenix selects this image when a tracked repository
+# specifies JDK 21.
+FROM golang:1.26-alpine3.22 AS build
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -o /out/patchwrit-worker ./cmd/patchwrit-worker
+
+FROM maven:3.9.11-eclipse-temurin-21@sha256:463a1849665463254b2dd56e3a5b316f1596bc93d0571065c06ea05bb48ab8f4 AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/patchwrit-worker /patchwrit-worker
+ENTRYPOINT ["/patchwrit-worker"]
