@@ -15,7 +15,7 @@ SHA), `PATCHWRIT_CALLBACK_URL`, `PATCHWRIT_CALLBACK_TOKEN` (job-scoped,
 short-lived), `PATCHWRIT_TIMEOUT_SECONDS`, `PATCHWRIT_JDK`,
 `PATCHWRIT_MAVEN`.
 
-**Output** is one bounded JSON POST (max 256 KB) to the callback URL with
+**Output** is one bounded JSON POST (max 4 MB) to the callback URL with
 the token as a Bearer credential:
 
 ```json
