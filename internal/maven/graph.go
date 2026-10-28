@@ -5,10 +5,12 @@
 package maven
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,7 +186,7 @@ func Resolve(ctx context.Context, dir string, pomFiles []string, pomTruncated bo
 	env = append(env, "HOME="+workHome, "MAVEN_OPTS=-Xmx512m")
 	cmd.Env = env
 
-	out, runErr := cmd.CombinedOutput()
+	out, runErr := streamingOutput(cmd)
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("timeout: %w", ctx.Err())
 	}
@@ -355,6 +357,24 @@ func pomCoordinate(path string) string {
 		return ""
 	}
 	return group + ":" + pom.ArtifactID
+}
+
+// streamingOutput runs cmd, capturing combined output for parsing
+// while also streaming it live to the worker's stderr. Fly captures
+// the Machine's stderr, so Maven progress is visible in `fly logs`
+// in real time instead of being buffered and discarded. Maven runs
+// with a scrubbed environment, so no secrets can appear in this
+// stream; the result JSON on stdout stays machine-readable.
+func streamingOutput(cmd *exec.Cmd) ([]byte, error) {
+	return streamingOutputTo(cmd, os.Stderr)
+}
+
+func streamingOutputTo(cmd *exec.Cmd, stream io.Writer) ([]byte, error) {
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&buf, stream)
+	cmd.Stderr = io.MultiWriter(&buf, stream)
+	err := cmd.Run()
+	return buf.Bytes(), err
 }
 
 func truncate(s string, max int) string {
