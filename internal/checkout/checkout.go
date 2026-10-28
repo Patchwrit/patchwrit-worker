@@ -35,17 +35,18 @@ func Clone(ctx context.Context, repositoryURL, pinnedSHA, dir string) (*contract
 		return nil, fmt.Errorf("checked out %s, want pinned %s", head, pinnedSHA)
 	}
 
-	poms, err := findPOMs(dir)
+	poms, truncated, err := findPOMs(dir)
 	if err != nil {
 		return nil, err
 	}
 
 	return &contract.RepositoryInfo{
-		RepositoryURL: repositoryURL,
-		PinnedSHA:     pinnedSHA,
-		CheckedOutSHA: head,
-		POMFiles:      poms,
-		Modules:       rootModules(dir),
+		RepositoryURL:         repositoryURL,
+		PinnedSHA:             pinnedSHA,
+		CheckedOutSHA:         head,
+		POMFiles:              poms,
+		Modules:               rootModules(dir),
+		POMInventoryTruncated: truncated,
 	}, nil
 }
 
@@ -65,9 +66,12 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 	return strings.TrimSpace(string(out)), nil
 }
 
-func findPOMs(root string) ([]string, error) {
-	poms := []string{}
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+// findPOMs inventories pom.xml files, reporting truncated=true when
+// the cap stopped the walk early (the inventory is then incomplete
+// and must not be presented as exhaustive).
+func findPOMs(root string) (poms []string, truncated bool, err error) {
+	poms = []string{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -81,16 +85,17 @@ func findPOMs(root string) ([]string, error) {
 			}
 			poms = append(poms, filepath.ToSlash(rel))
 			if len(poms) >= maxPOMFiles {
+				truncated = true
 				return filepath.SkipAll
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("find POM files: %w", err)
+		return nil, false, fmt.Errorf("find POM files: %w", err)
 	}
 	sort.Strings(poms)
-	return poms, nil
+	return poms, truncated, nil
 }
 
 type pomModules struct {

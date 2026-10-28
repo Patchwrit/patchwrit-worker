@@ -8,6 +8,16 @@
 
 **Go / patchwrit-worker** owns bounded execution inside a disposable Fly Machine: toolchain checks, cloning pinned public GitHub commits, Maven dependency resolution, evidence acquisition, and (later, explicitly authorized) remediation validation. It does not own Fly control-plane tokens or GitHub write credentials.
 
+## Schema v2 (implemented)
+
+The worker emits `schema_version: 2`. Dependencies carry `module`
+(owning reactor module coordinate), `pom_path`, and
+`introduction_paths` (all observed paths), and the result carries a
+`graph` completeness block (`complete`, `modules_total`,
+`modules_resolved`, `modules_failed`, `dependency_limit_hit`,
+`pom_inventory_truncated`). Partial results are explicit, never silent.
+Canonical contract: `docs/ANALYSIS_CONTRACT.md` in patchwrit-api.
+
 ## Phase 0: Smoke-test payload (provisional)
 
 Launch Go worker with job inputs via configuration or scoped job payload; don't expose secrets in command-line arguments or logs.
