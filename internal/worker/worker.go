@@ -3,7 +3,6 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/Patchwrit/patchwrit-worker/internal/checkout"
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
 	"github.com/Patchwrit/patchwrit-worker/internal/maven"
+	"github.com/Patchwrit/patchwrit-worker/internal/observe"
 	"github.com/Patchwrit/patchwrit-worker/internal/toolchain"
 )
 
@@ -37,9 +37,14 @@ type Input struct {
 // it at the pinned SHA and inventories its POM structure. A failed clone
 // is a reported failure (status failed, categorized error), not a crash.
 func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) contract.Result {
+	observe.Event(in.JobID, "worker.started", map[string]any{
+		"repository_url": in.RepositoryURL,
+		"pinned_sha":     in.PinnedSHA,
+	})
 	result := BuildResult(in.JobID, start, detect)
 
 	if in.RepositoryURL == "" {
+		observe.Event(in.JobID, "worker.completed", map[string]any{"mode": "toolchain_only"})
 		return result
 	}
 
@@ -49,9 +54,10 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 	}
 	defer os.RemoveAll(dir)
 
-	// Lifecycle lines go to stderr: Fly captures them for `fly logs`,
-	// while stdout stays reserved for the result JSON.
-	fmt.Fprintf(os.Stderr, "patchwrit-worker: cloning %s at %s\n", in.RepositoryURL, in.PinnedSHA)
+	observe.Event(in.JobID, "checkout.started", map[string]any{
+		"repository_url": in.RepositoryURL,
+		"pinned_sha":     in.PinnedSHA,
+	})
 	cloneStart := time.Now()
 	info, err := checkout.Clone(ctx, in.RepositoryURL, in.PinnedSHA, dir)
 	result.TimingsMs["clone"] = time.Since(cloneStart).Milliseconds()
@@ -60,8 +66,18 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 		if ctx.Err() != nil {
 			category = "timeout"
 		}
+		observe.Event(in.JobID, "checkout.failed", map[string]any{
+			"category":    category,
+			"duration_ms": result.TimingsMs["clone"],
+		})
 		return fail(result, category, err.Error(), start)
 	}
+	observe.Event(in.JobID, "checkout.completed", map[string]any{
+		"checked_out_sha":         info.CheckedOutSHA,
+		"pom_files":               len(info.POMFiles),
+		"pom_inventory_truncated": info.POMInventoryTruncated,
+		"duration_ms":             result.TimingsMs["clone"],
+	})
 
 	result.Repository = info
 
@@ -69,21 +85,30 @@ func Execute(ctx context.Context, in Input, start time.Time, detect DetectFunc) 
 		return fail(result, "invalid_pom", "no pom.xml found in repository", start)
 	}
 
-	fmt.Fprintf(os.Stderr, "patchwrit-worker: resolving Maven graph (%d POM files)\n", len(info.POMFiles))
+	observe.Event(in.JobID, "maven.started", map[string]any{"pom_files": len(info.POMFiles)})
 	mavenStart := time.Now()
-	resolution, err := maven.Resolve(ctx, dir, info.POMFiles, info.POMInventoryTruncated)
+	resolution, err := maven.Resolve(ctx, dir, info.POMFiles, info.POMInventoryTruncated, in.JobID)
 	result.TimingsMs["maven"] = time.Since(mavenStart).Milliseconds()
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail(result, "timeout", err.Error(), start)
 		}
 		category, message := splitCategory(err.Error())
+		observe.Event(in.JobID, "maven.failed", map[string]any{
+			"category":    category,
+			"duration_ms": result.TimingsMs["maven"],
+		})
 		return fail(result, category, message, start)
 	}
 	result.Dependencies = resolution.Dependencies
 	result.Graph = &resolution.Graph
 
 	result.TimingsMs["execution"] = time.Since(start).Milliseconds()
+	observe.Event(in.JobID, "worker.completed", map[string]any{
+		"dependencies":   len(result.Dependencies),
+		"graph_complete": resolution.Graph.Complete,
+		"duration_ms":    result.TimingsMs["execution"],
+	})
 	return result
 }
 

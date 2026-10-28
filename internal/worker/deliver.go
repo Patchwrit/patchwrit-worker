@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/Patchwrit/patchwrit-worker/internal/contract"
+	"github.com/Patchwrit/patchwrit-worker/internal/observe"
 )
 
 // MaxCallbackPayloadBytes mirrors the Phoenix callback limit
@@ -38,8 +39,15 @@ func Deliver(ctx context.Context, client *http.Client, url, token string, res co
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
+	observe.Event(res.JobID, "callback.started", map[string]any{
+		"payload_bytes": len(payload),
+		"status":        res.Status,
+		"dependencies":  len(res.Dependencies),
+	})
+
 	resp, err := client.Do(req)
 	if err != nil {
+		observe.Event(res.JobID, "callback.failed", map[string]any{"error": err.Error()})
 		return fmt.Errorf("callback request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -47,7 +55,9 @@ func Deliver(ctx context.Context, client *http.Client, url, token string, res co
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		observe.Event(res.JobID, "callback.failed", map[string]any{"http_status": resp.StatusCode})
 		return fmt.Errorf("callback returned status %d", resp.StatusCode)
 	}
+	observe.Event(res.JobID, "callback.completed", map[string]any{"http_status": resp.StatusCode})
 	return nil
 }
