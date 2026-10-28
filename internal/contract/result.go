@@ -69,6 +69,20 @@ type Graph struct {
 	ModulesFailed         []string `json:"modules_failed"`
 	DependencyLimitHit    bool     `json:"dependency_limit_hit"`
 	POMInventoryTruncated bool     `json:"pom_inventory_truncated"`
+	// Instrumentation: how much artifact fetching resolution required,
+	// and per-module detail (see ModuleStat).
+	DownloadedArtifacts int64        `json:"downloaded_artifacts"`
+	DownloadedBytes     int64        `json:"downloaded_bytes"`
+	Modules             []ModuleStat `json:"modules"`
+}
+
+// ModuleStat is one reactor module's resolution instrumentation.
+type ModuleStat struct {
+	Module       string `json:"module"`
+	POMPath      string `json:"pom_path"`
+	Status       string `json:"status"`
+	DurationMs   int64  `json:"duration_ms"`
+	Dependencies int    `json:"dependencies"`
 }
 
 func (d Dependency) Coordinate() string {

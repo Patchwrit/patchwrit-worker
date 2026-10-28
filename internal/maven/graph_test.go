@@ -152,6 +152,18 @@ func TestResolveTwoModuleReactor(t *testing.T) {
 	}
 }
 
+func TestParseModuleDurations(t *testing.T) {
+	log := `04:00:00,000 [INFO] --- dependency:3.8.1:tree (default-cli) @ fixture-parent ---
+04:00:02,500 [INFO] --- dependency:3.8.1:tree (default-cli) @ mod-a ---
+04:00:12,500 [INFO] --- dependency:3.8.1:tree (default-cli) @ mod-b ---
+04:00:13,000 [INFO] BUILD SUCCESS`
+
+	durations := parseModuleDurations(log)
+	if durations["fixture-parent"] != 2500 || durations["mod-a"] != 10000 || durations["mod-b"] != 500 {
+		t.Fatalf("durations = %v", durations)
+	}
+}
+
 func TestScrubbedEnvRemovesSecrets(t *testing.T) {
 	env := ScrubbedEnv([]string{
 		"PATH=/usr/bin",
